@@ -1,27 +1,52 @@
-from libs.hash import verify_password
+from configs.database import db
+from libs.hash import hash_password, verify_password
+from libs.jwt import create_access_token
 
-# giả lập DB
-fake_auth_db = [
-    {
-        "userId": "1",
-        "username": "admin",
-        "password": "$2b$12$KIXQy..."  # password đã hash
+auth_collection = db["auth_accounts"]
+# user_collection = db["users"]
+
+
+# REGISTER
+async def register(username: str, password: str):
+    existing = await auth_collection.find_one({"username": username})
+
+    if existing:
+        raise Exception("Username already exists")
+
+    hashed = hash_password(password)
+    
+    # user = await user_collection.insert_one({
+    #     "username": username,
+    #     "created_at": db.client.server_info()["localTime"]
+    # })
+
+    result = await auth_collection.insert_one({
+        "username": username,
+        "password": hashed
+    })
+
+    return {
+        "message": "Register success",
+        "userId": str(result.inserted_id)
     }
-]
 
-def login(username: str, password: str):
-    # 1. tìm user
-    user = next((u for u in fake_auth_db if u["username"] == username), None)
+
+# LOGIN
+async def login(username: str, password: str):
+    user = await auth_collection.find_one({"username": username})
 
     if not user:
         raise Exception("User not found")
 
-    # 2. verify password
     if not verify_password(password, user["password"]):
         raise Exception("Wrong password")
 
-    # 3. trả kết quả (sau này thay bằng JWT)
+    token = create_access_token({
+        "user_id": str(user["_id"]),
+        "username": user["username"]
+    })
+
     return {
-        "message": "Login success",
-        "userId": user["userId"]
+        "access_token": token,
+        "token_type": "bearer"
     }
