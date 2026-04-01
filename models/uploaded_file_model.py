@@ -12,11 +12,9 @@ class UploadedFile(BaseModel):
     fileSize: int
 
     storageUrl: str
-    cloudProvider: Optional[str] = None
+    storagePath: str
 
-    extractedText: Optional[str] = None
     isProcessed: bool = False
 
-    embeddings: Optional[List[float]] = None
-
     createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
