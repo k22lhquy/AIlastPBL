@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from controllers import auth_controller
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
+router = APIRouter()
 
 
 class AuthRequest(BaseModel):
