@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, UploadFile, File
 from middlewares.auth_middleware import get_current_user
-from controllers.conversation_controller import create_conversation, upload_file_controller
+from controllers.conversation_controller import create_conversation, upload_file_controller, get_all_conversations_controller
 
 router = APIRouter()
 
@@ -11,3 +11,7 @@ async def new_chat(user=Depends(get_current_user)):
 @router.post("/upload-file")
 async def upload_file(user=Depends(get_current_user), conversation_id: str = None, file: UploadFile = File(...)):
     return await upload_file_controller(user["user_id"], conversation_id, file)
+
+@router.get("/all-conversations")
+async def get_all_conversations(user=Depends(get_current_user)):
+    return await get_all_conversations_controller(user["user_id"])

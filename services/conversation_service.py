@@ -22,10 +22,26 @@ async def create_chatbox(user_id: str):
         "message": "Conversation created",
         "user_id": user_id
     }
+
+
+async def get_all_conversations_service(user_id: str):
+    """Lấy tất cả conversations của user"""
+    try:
+        from bson import ObjectId
+        conversations = await chatBox_collection.find({"userId": user_id}).sort("createdAt", -1).to_list(None)
+        
+        # Convert ObjectId to string
+        for conv in conversations:
+            conv["id"] = str(conv.pop("_id", ""))
+        
+        return {
+            "message": "Success",
+            "data": conversations,
+            "total": len(conversations)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     
-# def safe_filename(filename: str):
-#     filename = unicodedata.normalize("NFC", filename)
-#     return re.sub(r'[^\w\-.]', '_', filename)
     
 async def upload_file_service(user_id: str, conversation_id: str, file: UploadFile):
     try:
