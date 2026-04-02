@@ -4,8 +4,13 @@ from models.uploaded_file_model import UploadedFile
 from datetime import datetime
 from fastapi import UploadFile, File, APIRouter, HTTPException
 import uuid
+import os
+import asyncio
+import tempfile
 from configs.supabase import supabase
 from libs.safeFilename import safe_filename
+from libs.ai.indexing import load_single_file, chunk_documents
+from libs.ai.embedding import get_embedding_model
 
 chatBox_collection = db["chat_boxes"]
 upload_file = db["uploaded_files"]
@@ -14,8 +19,8 @@ upload_file = db["uploaded_files"]
 async def create_chatbox(user_id: str):
     # Create a new chat box for the user
     chat_box = Conversation(userId=user_id,
-                                 createdAt=datetime.datetime.utcnow(),
-                                 updatedAt=datetime.datetime.utcnow()).dict( exclude_none=True   )
+                                 createdAt=datetime.utcnow(),
+                                 updatedAt=datetime.utcnow()).dict( exclude_none=True   )
     await chatBox_collection.insert_one(chat_box)
 
     return {
@@ -83,9 +88,55 @@ async def upload_file_service(user_id: str, conversation_id: str, file: UploadFi
         }
 
         result = await upload_file.insert_one(doc)
+        file_id_str = str(result.inserted_id)
+
+        # Process embedding
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        try:
+            def process_embedding(fpath):
+                docs = load_single_file(fpath)
+                if not docs:
+                    return []
+                chunks = chunk_documents(docs)
+                embeddings_model = get_embedding_model()
+                
+                page_contents = [chunk.page_content for chunk in chunks]
+                if not page_contents:
+                    return []
+                
+                vectors = embeddings_model.embed_documents(page_contents)
+                
+                chunk_docs = []
+                for idx, (chunk, vector) in enumerate(zip(chunks, vectors)):
+                    page = chunk.metadata.get('page')
+                    chunk_docs.append({
+                        "fileId": file_id_str,
+                        "chunkIndex": idx,
+                        "content": chunk.page_content,
+                        "embedding": vector,
+                        "startPage": page + 1 if page is not None else None,
+                        "endPage": page + 1 if page is not None else None
+                    })
+                return chunk_docs
+
+            chunk_docs = await asyncio.to_thread(process_embedding, tmp_path)
+            
+            if chunk_docs:
+                file_chunks_collection = db["file_chunks"]
+                await file_chunks_collection.insert_many(chunk_docs)
+                await upload_file.update_one({"_id": result.inserted_id}, {"$set": {"isProcessed": True}})
+                
+        except Exception as embed_err:
+            print(f"Embedding error: {embed_err}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
         return {
-            "id": str(result.inserted_id),
+            "id": file_id_str,
             "fileName": original_name,
             "storageUrl": public_url
         }
