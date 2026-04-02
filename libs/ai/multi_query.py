@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from src.config import LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
+from libs.ai.config import LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
 
 
 def build_multi_query_retriever(vectorstore, llm=None):

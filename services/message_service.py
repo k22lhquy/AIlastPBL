@@ -36,32 +36,71 @@ async def message_service(user_id: str, message: str, conversationId: str):
     if file_ids:
         chunks = await file_chunks_collection.find({"fileId": {"$in": file_ids}}).to_list(None)
         if chunks:
-            # 2. Embed câu hỏi user
-            def embed_q(text):
+            # 2. Sinh thêm câu hỏi (Multi-Query)
+            from langchain_core.prompts import PromptTemplate
+            prompt_mq = PromptTemplate(
+                input_variables=["question"],
+                template="""Tạo ra 3 câu hỏi khác nhau cùng ý nghĩa với câu hỏi gốc bên dưới. Mục đích là tìm kiếm tài liệu từ nhiều góc độ khác nhau. Yêu cầu: Viết bằng tiếng Việt, mỗi câu hỏi trên 1 dòng, không đánh số, không giải thích. Trả về đúng 3 dòng.
+Câu hỏi gốc: {question}"""
+            )
+            llm_mq = ChatOpenAI(
+                base_url=LLM_BASE_URL,
+                api_key=LLM_API_KEY,
+                model=LLM_MODEL,
+                temperature=0
+            )
+            mq_chain = prompt_mq | llm_mq | StrOutputParser()
+            def get_multi_queries(q):
+                return mq_chain.invoke({"question": q})
+                
+            mq_result = await asyncio.to_thread(get_multi_queries, message)
+            extra_questions = [q.strip() for q in mq_result.strip().split("\n") if q.strip()]
+            all_questions = [message] + extra_questions
+            print(f"\n🔍 Multi-Query — các câu hỏi được dùng để search:")
+            for i, q in enumerate(all_questions, 1):
+                print(f"   {i}. {q}")
+
+            # 3. Embed tất cả các câu hỏi
+            def embed_multi_queries(texts):
                 em = get_embedding_model()
-                return em.embed_query(text)
+                return [em.embed_query(t) for t in texts]
                 
-            q_vec = await asyncio.to_thread(embed_q, message)
-            q_vec_np = np.array(q_vec)
-            q_norm = np.linalg.norm(q_vec_np)
+            q_vecs = await asyncio.to_thread(embed_multi_queries, all_questions)
             
-            # Tính cosine similarity
-            scored_chunks = []
-            for chunk in chunks:
-                if "embedding" not in chunk or not chunk["embedding"]:
-                    continue
-                c_vec_np = np.array(chunk["embedding"])
-                c_norm = np.linalg.norm(c_vec_np)
-                if c_norm == 0 or q_norm == 0:
-                    score = 0
-                else:
-                    score = np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm)
-                scored_chunks.append((score, chunk["content"]))
+            # 4. Search song song & gộp kết quả
+            all_docs = []
+            for q_vec in q_vecs:
+                q_vec_np = np.array(q_vec)
+                q_norm = np.linalg.norm(q_vec_np)
                 
-            scored_chunks.sort(key=lambda x: x[0], reverse=True)
-            top_k = scored_chunks[:3]
+                scored_chunks = []
+                for chunk in chunks:
+                    if "embedding" not in chunk or not chunk["embedding"]:
+                        continue
+                    c_vec_np = np.array(chunk["embedding"])
+                    c_norm = np.linalg.norm(c_vec_np)
+                    if c_norm == 0 or q_norm == 0:
+                        score = 0
+                    else:
+                        score = np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm)
+                    scored_chunks.append((score, chunk["content"]))
+                
+                # Lấy Top 3 chunks cho mỗi câu hỏi
+                scored_chunks.sort(key=lambda x: x[0], reverse=True)
+                top_k = scored_chunks[:3]
+                all_docs.extend(top_k)
+                
+            # Bỏ trùng lặp (dựa theo nội dung 100 ký tự đầu để nhận biết)
+            seen = set()
+            unique_docs = []
+            for doc in all_docs:
+                key = doc[1][:100]
+                if key not in seen:
+                    seen.add(key)
+                    unique_docs.append(doc)
             
-            context_text = "\n\n---\n\n".join([f"[Đoạn ngữ cảnh] {c[1]}" for c in top_k])
+            print(f"   → Tìm được {len(all_docs)} chunks, còn {len(unique_docs)} sau khi bỏ trùng\n")
+            context_text = "\n\n---\n\n".join([f"[Đoạn ngữ cảnh] {c[1]}" for c in unique_docs])
             
     # 3. Tạo prompt và gọi LLM
     prompt = ChatPromptTemplate.from_template("""
