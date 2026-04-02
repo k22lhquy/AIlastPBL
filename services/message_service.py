@@ -3,7 +3,9 @@ from models.message_model import Message
 from datetime import datetime
 import numpy as np
 import asyncio
+from langchain_core.documents import Document
 from libs.ai.embedding import get_embedding_model
+from libs.ai.reranker import get_reranker_model
 from libs.ai.config import LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_OUTPUT_TOKENS
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -146,7 +148,18 @@ Câu hỏi gốc: {question}"""
                     unique_docs.append(doc)
             
             print(f"   → Tìm được {len(all_docs)} chunks, còn {len(unique_docs)} sau khi bỏ trùng\n")
-            context_text = "\n\n---\n\n".join([f"[Đoạn ngữ cảnh] {c[1]}" for c in unique_docs])
+            
+            # 5. Reranking
+            if unique_docs:
+                docs_to_rerank = [Document(page_content=c[1], metadata={"score": c[0]}) for c in unique_docs]
+                reranker = get_reranker_model()
+                
+                # Rerank against the rephrased search_question
+                ranked_docs = await asyncio.to_thread(reranker.rerank, search_question, docs_to_rerank)
+                
+                context_text = "\n\n---\n\n".join([f"[Đoạn ngữ cảnh] {c.page_content}" for c in ranked_docs])
+            else:
+                context_text = ""
             
     # 3. Tạo prompt và gọi LLM
     prompt = ChatPromptTemplate.from_template("""
