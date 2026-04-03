@@ -21,12 +21,11 @@ async def create_chatbox(user_id: str):
     chat_box = Conversation(userId=user_id,
                                  createdAt=datetime.utcnow(),
                                  updatedAt=datetime.utcnow()).dict( exclude_none=True   )
-    await chatBox_collection.insert_one(chat_box)
+    result = await chatBox_collection.insert_one(chat_box)
+    chat_box["id"] = str(result.inserted_id)
+    chat_box.pop("_id", None)
 
-    return {
-        "message": "Conversation created",
-        "user_id": user_id
-    }
+    return chat_box
 
 
 async def get_all_conversations_service(user_id: str):
@@ -39,11 +38,7 @@ async def get_all_conversations_service(user_id: str):
         for conv in conversations:
             conv["id"] = str(conv.pop("_id", ""))
         
-        return {
-            "message": "Success",
-            "data": conversations,
-            "total": len(conversations)
-        }
+        return conversations
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -207,4 +202,16 @@ async def delete_conversation_service(user_id: str, conversation_id: str):
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_all_files_service(user_id: str, conversation_id: str):
+    """Retrieve all uploaded files belonging to a conversation."""
+    try:
+        files = await upload_file.find({"conversationId": conversation_id, "userId": user_id}).sort("createdAt", -1).to_list(None)
+        # Convert ObjectId
+        for f in files:
+            f["id"] = str(f.pop("_id", ""))
+            
+        return files
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
