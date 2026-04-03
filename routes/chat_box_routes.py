@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from middlewares.auth_middleware import get_current_user
-from controllers.conversation_controller import create_conversation, upload_file_controller, get_all_conversations_controller, delete_file_controller, delete_conversation_controller, get_all_files_controller
+from controllers.conversation_controller import create_conversation, upload_file_controller, get_all_conversations_controller, delete_file_controller, delete_conversation_controller, get_all_files_controller, update_conversation_title_controller
 from libs.baseResponse import BaseResponse
+from pydantic import BaseModel
+
+class RenameTitleRequest(BaseModel):
+    title: str
 
 router = APIRouter()
 
@@ -58,6 +62,22 @@ async def delete_file(file_id: str, user=Depends(get_current_user)):
 @router.delete("/delete-conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, user=Depends(get_current_user)):
     try:
+        result = await delete_conversation_controller(user["user_id"], conversation_id)
+        return BaseResponse(success=True, data=result, message="Success")
+    except HTTPException as e:
+        return BaseResponse(success=False, data=None, message=str(e.detail))
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
+@router.put("/rename/{conversation_id}")
+async def rename_conversation(conversation_id: str, req: RenameTitleRequest, user=Depends(get_current_user)):
+    try:
+        result = await update_conversation_title_controller(user["user_id"], conversation_id, req.title)
+        return BaseResponse(success=True, data=result, message="Success")
+    except HTTPException as e:
+        return BaseResponse(success=False, data=None, message=str(e.detail))
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
         result = await delete_conversation_controller(user["user_id"], conversation_id)
         return BaseResponse(success=True, data=result, message="Success")
     except HTTPException as e:

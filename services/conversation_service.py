@@ -19,6 +19,7 @@ upload_file = db["uploaded_files"]
 async def create_chatbox(user_id: str):
     # Create a new chat box for the user
     chat_box = Conversation(userId=user_id,
+                                 title="New Chat",
                                  createdAt=datetime.utcnow(),
                                  updatedAt=datetime.utcnow()).dict( exclude_none=True   )
     result = await chatBox_collection.insert_one(chat_box)
@@ -26,6 +27,21 @@ async def create_chatbox(user_id: str):
     chat_box.pop("_id", None)
 
     return chat_box
+
+async def update_conversation_title_service(user_id: str, conversation_id: str, new_title: str):
+    try:
+        from bson import ObjectId
+        result = await chatBox_collection.update_one(
+            {"_id": ObjectId(conversation_id), "userId": user_id},
+            {"$set": {"title": new_title, "updatedAt": datetime.utcnow()}}
+        )
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="Conversation not found or nothing to modify")
+        return {"id": conversation_id, "title": new_title}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def get_all_conversations_service(user_id: str):
