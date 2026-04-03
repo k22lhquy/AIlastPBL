@@ -131,7 +131,7 @@ Câu hỏi gốc: {question}"""
                         score = 0
                     else:
                         score = np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm)
-                    scored_chunks.append((score, chunk["content"]))
+                    scored_chunks.append((score, chunk["content"], chunk.get("fileId")))
                 
                 # Lấy Top 3 chunks cho mỗi câu hỏi
                 scored_chunks.sort(key=lambda x: x[0], reverse=True)
@@ -151,15 +151,26 @@ Câu hỏi gốc: {question}"""
             
             # 5. Reranking
             if unique_docs:
-                docs_to_rerank = [Document(page_content=c[1], metadata={"score": c[0]}) for c in unique_docs]
+                docs_to_rerank = [Document(page_content=c[1], metadata={"score": c[0], "fileId": c[2]}) for c in unique_docs]
                 reranker = get_reranker_model()
                 
                 # Rerank against the rephrased search_question
                 ranked_docs = await asyncio.to_thread(reranker.rerank, search_question, docs_to_rerank)
                 
                 context_text = "\n\n---\n\n".join([f"[Đoạn ngữ cảnh] {c.page_content}" for c in ranked_docs])
+                
+                file_map = {str(f["_id"]): f.get("fileName", "Unknown File") for f in files}
+                final_sources = []
+                for d in ranked_docs:
+                    fid = str(d.metadata.get("fileId", ""))
+                    final_sources.append({
+                        "file_id": fid,
+                        "file_name": file_map.get(fid, "Unknown File"),
+                        "content": d.page_content
+                    })
             else:
                 context_text = ""
+                final_sources = []
             
     # 3. Tạo prompt và gọi LLM
     prompt = ChatPromptTemplate.from_template("""
@@ -202,13 +213,15 @@ Bạn có thể trả lời bình thường nếu câu hỏi thiên về giao ti
         conversationId=conversationId,
         role="bot",
         content=answer,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.utcnow(),
+        sources=final_sources if 'final_sources' in locals() else []
     ).dict(exclude_none=True)
     bot_result = await message_collection.insert_one(bot_mess)
 
     return {
         "message": message,
         "answer": answer,
+        "sources": bot_mess.get("sources", []),
         "user_message_id": str(user_msg_result.inserted_id),
         "bot_message_id": str(bot_result.inserted_id),
         "conversationId": conversationId

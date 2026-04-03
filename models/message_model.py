@@ -9,4 +9,4 @@ class Message(BaseModel):
     content: str
     timestamp: Optional[datetime] = None
     tokens: Optional[int] = None
-    referencedFiles: Optional[List[str]] = []
+    sources: Optional[list] = []
