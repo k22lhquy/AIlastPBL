@@ -143,3 +143,35 @@ async def upload_file_service(user_id: str, conversation_id: str, file: UploadFi
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+async def delete_file_service(user_id: str, file_id: str):
+    try:
+        from bson import ObjectId
+        # Tìm file
+        file_to_delete = await upload_file.find_one({"_id": ObjectId(file_id), "userId": user_id})
+        if not file_to_delete:
+            raise HTTPException(status_code=404, detail="File không tồn tại hoặc bạn không có quyền truy cập")
+
+        # Xóa file vật lý ở Supabase
+        storage_path = file_to_delete.get("storagePath")
+        if storage_path:
+            try:
+                supabase.storage.from_("files").remove([storage_path])
+            except Exception as e:
+                print(f"Lỗi khi xóa file trên Supabase: {e}")
+
+        # Xóa chunks trong MongoDB
+        file_chunks_collection = db["file_chunks"]
+        await file_chunks_collection.delete_many({"fileId": file_id})
+
+        # Xóa bản ghi UploadedFile
+        await upload_file.delete_one({"_id": ObjectId(file_id)})
+
+        return {
+            "status": "success",
+            "message": "Đã xóa file và toàn bộ chunks thành công"
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
