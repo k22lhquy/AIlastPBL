@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from middlewares.auth_middleware import get_current_user
-from controllers.conversation_controller import create_conversation, upload_file_controller, get_all_conversations_controller, delete_file_controller
+from controllers.conversation_controller import create_conversation, upload_file_controller, get_all_conversations_controller, delete_file_controller, delete_conversation_controller
 
 router = APIRouter()
 
@@ -19,3 +19,7 @@ async def get_all_conversations(user=Depends(get_current_user)):
 @router.delete("/delete-file/{file_id}")
 async def delete_file(file_id: str, user=Depends(get_current_user)):
     return await delete_file_controller(user["user_id"], file_id)
+
+@router.delete("/delete-conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, user=Depends(get_current_user)):
+    return await delete_conversation_controller(user["user_id"], conversation_id)

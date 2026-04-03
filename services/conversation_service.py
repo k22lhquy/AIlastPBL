@@ -175,3 +175,36 @@ async def delete_file_service(user_id: str, file_id: str):
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
+
+async def delete_conversation_service(user_id: str, conversation_id: str):
+    try:
+        from bson import ObjectId
+        # Kiểm tra sự tồn tại và quyền sở hữu conversation
+        conv = await chatBox_collection.find_one({"_id": ObjectId(conversation_id), "userId": user_id})
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation không tồn tại hoặc bạn không có quyền truy cập")
+
+        # Lấy tất cả file thuộc về conversation này
+        files = await upload_file.find({"conversationId": conversation_id}).to_list(None)
+        
+        # Xóa các file (bao gồm supabase, file_chunks DB, upload DB)
+        for f in files:
+            try:
+                await delete_file_service(user_id=user_id, file_id=str(f["_id"]))
+            except Exception as fe:
+                print(f"Lỗi khi xoá file {f['_id']} trong conversation: {fe}")
+
+        # Xóa tất cả tin nhắn (Message)
+        await db["messages"].delete_many({"conversationId": conversation_id})
+
+        # Xóa conversation từ collection
+        await chatBox_collection.delete_one({"_id": ObjectId(conversation_id)})
+
+        return {
+            "status": "success",
+            "message": "Đã xóa toàn bộ dữ liệu của cuộc hội thoại thành công"
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
