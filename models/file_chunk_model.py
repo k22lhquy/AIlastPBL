@@ -8,7 +8,7 @@ class FileChunk(BaseModel):
     chunkIndex: int
     content: str
 
-    embedding: Optional[List[float]] = None  # vector 1536 dim
+    embedding: Optional[List[float]] = None
 
     startPage: Optional[int] = None
     endPage: Optional[int] = None

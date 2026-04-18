@@ -78,6 +78,53 @@ async def rename_conversation(conversation_id: str, req: RenameTitleRequest, use
         return BaseResponse(success=False, data=None, message=str(e.detail))
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
+
+class ImportFileRequest(BaseModel):
+    file_id: str
+
+@router.post("/import-file/{conversation_id}")
+async def import_community_file(conversation_id: str, req: ImportFileRequest, user=Depends(get_current_user)):
+    try:
+        from configs.database import db
+        from bson import ObjectId
+        # Look up original file
+        orig_file = await db["uploaded_files"].find_one({"_id": ObjectId(req.file_id)})
+        if not orig_file:
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        # Duplicate file record for this specific chat
+        new_file_doc = dict(orig_file)
+        new_file_doc.pop("_id", None)
+        new_file_doc["userId"] = user["user_id"]
+        new_file_doc["conversationId"] = conversation_id
+        new_file_doc["isCommunity"] = False
+        new_file_doc["createdAt"] = __import__('datetime').datetime.utcnow()
+        new_file_doc["updatedAt"] = __import__('datetime').datetime.utcnow()
+        
+        insert_res = await db["uploaded_files"].insert_one(new_file_doc)
+        new_file_id_str = str(insert_res.inserted_id)
+        
+        # Quickly clone all embedded chunks so the RAG retains conversation separation
+        chunks = await db["file_chunks"].find({"fileId": req.file_id}).to_list(None)
+        if chunks:
+            new_chunks = []
+            for c in chunks:
+                new_c = dict(c)
+                new_c.pop("_id", None)
+                new_c["fileId"] = new_file_id_str
+                new_chunks.append(new_c)
+            await db["file_chunks"].insert_many(new_chunks)
+            
+        return BaseResponse(success=True, data={"id": new_file_id_str}, message="File cloned successfully into workspace.")
+        
+    except HTTPException as e:
+        return BaseResponse(success=False, data=None, message=str(e.detail))
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
+@router.delete("/delete-conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, user=Depends(get_current_user)):
+    try:
         result = await delete_conversation_controller(user["user_id"], conversation_id)
         return BaseResponse(success=True, data=result, message="Success")
     except HTTPException as e:
