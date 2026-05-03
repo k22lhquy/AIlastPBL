@@ -56,6 +56,24 @@ async def report_post(post_id: str, user=Depends(get_current_user)):
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
 
+@router.get("/me/posts")
+async def get_my_posts(user=Depends(get_current_user)):
+    try:
+        from controllers.community_controller import get_user_posts_controller
+        res = await get_user_posts_controller(user)
+        return BaseResponse(success=True, data=res, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
+@router.delete("/posts/{post_id}")
+async def delete_post(post_id: str, user=Depends(get_current_user)):
+    try:
+        from controllers.community_controller import delete_post_controller
+        res = await delete_post_controller(user, post_id)
+        return BaseResponse(success=True, data=res, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
 @router.post("/upload")
 async def upload_community_file(user=Depends(get_current_user), file: UploadFile = File(...)):
     try:

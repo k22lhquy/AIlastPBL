@@ -54,4 +54,23 @@ async def report_post_service(post_id: str, user_id: str):
         reports.append(user_id)
         await post_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"reports": reports}})
         
-    return {"message": "Report submitted"}
+async def get_user_posts_service(user_id: str):
+    post_col = db["posts"]
+    posts = await post_col.find({"userId": user_id}).sort("createdAt", -1).to_list(None)
+    
+    for p in posts:
+         p["id"] = str(p.pop("_id", ""))
+         if "file_id" in p:
+             p["fileId"] = p.pop("file_id", "")
+         if "file_name" in p:
+             p["fileName"] = p.pop("file_name", "")
+         if "storage_url" in p:
+             p["storageUrl"] = p.pop("storage_url", "")
+    return posts
+
+async def delete_post_service(post_id: str, user_id: str):
+    post_col = db["posts"]
+    result = await post_col.delete_one({"_id": ObjectId(post_id), "userId": user_id})
+    if result.deleted_count == 0:
+        raise Exception("Post not found or unauthorized")
+    return {"message": "Post deleted"}

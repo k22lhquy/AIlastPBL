@@ -1,4 +1,4 @@
-from services.community_service import create_post_service, get_all_posts_service, toggle_like_service, report_post_service
+from services.community_service import create_post_service, get_all_posts_service, toggle_like_service, report_post_service, get_user_posts_service, delete_post_service
 
 async def create_post_controller(user_data, post_req):
     post_dict = post_req.dict()
@@ -24,3 +24,10 @@ async def toggle_like_controller(user_data, post_id: str):
 
 async def report_post_controller(user_data, post_id: str):
     return await report_post_service(post_id, user_data["user_id"])
+
+async def get_user_posts_controller(user_data):
+    posts = await get_user_posts_service(user_data["user_id"])
+    return posts
+
+async def delete_post_controller(user_data, post_id: str):
+    return await delete_post_service(post_id, user_data["user_id"])
