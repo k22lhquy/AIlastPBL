@@ -16,6 +16,95 @@ message_collection = db["messages"]
 file_chunks_collection = db["file_chunks"]
 upload_file_collection = db["uploaded_files"]
 
+async def search_community_posts(q_vec: list, top_k: int = 3, threshold: float = 0.45):
+    """Semantic search on community file chunks using pre-computed embeddings."""
+    try:
+        community_chunks = await file_chunks_collection.find(
+            {"isCommunity": True}
+        ).to_list(None)
+        if not community_chunks:
+            return []
+        
+        q_vec_np = np.array(q_vec)
+        q_norm = np.linalg.norm(q_vec_np)
+        if q_norm == 0:
+            return []
+        
+        scored = []
+        for chunk in community_chunks:
+            if not chunk.get("embedding"):
+                continue
+            c_vec_np = np.array(chunk["embedding"])
+            c_norm = np.linalg.norm(c_vec_np)
+            if c_norm == 0:
+                continue
+            score = float(np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm))
+            if score >= threshold:
+                scored.append((score, chunk.get("fileId", "")))
+        
+        scored.sort(key=lambda x: x[0], reverse=True)
+        
+        # Deduplicate by fileId
+        seen_file_ids = []
+        for score, fid in scored:
+            if fid not in seen_file_ids:
+                seen_file_ids.append(fid)
+            if len(seen_file_ids) >= top_k:
+                break
+        
+        if not seen_file_ids:
+            return []
+        
+        # Lookup posts from file IDs
+        from bson import ObjectId
+        posts = await db["posts"].find({"fileId": {"$in": seen_file_ids}}).to_list(None)
+        result = []
+        for p in posts:
+            result.append({
+                "id": str(p["_id"]),
+                "title": p.get("title", ""),
+                "description": p.get("description", ""),
+                "username": p.get("username", ""),
+                "userId": p.get("userId", "")
+            })
+        return result[:top_k]
+    except Exception as e:
+        print(f"[community_posts_search] error: {e}")
+        return []
+
+async def search_community_qa(question_text: str, top_k: int = 3):
+    """Keyword regex search on Q&A questions."""
+    try:
+        import re
+        escaped = re.escape(question_text[:100])
+        pattern = f".*{escaped}.*"
+        # Try full phrase first, if too few results generalize to individual words
+        qa_cursor = await db["questions"].find({
+            "$or": [
+                {"body": {"$regex": pattern, "$options": "i"}},
+                {"tags": {"$elemMatch": {"$regex": pattern, "$options": "i"}}}
+            ]
+        }).to_list(top_k)
+        
+        if not qa_cursor:
+            # Fallback: search individual meaningful words
+            words = [w for w in re.split(r'\s+', question_text) if len(w) > 3]
+            if not words:
+                return []
+            word_query = {"$or": [{"body": {"$regex": re.escape(w), "$options": "i"}} for w in words[:5]]}
+            qa_cursor = await db["questions"].find(word_query).limit(top_k).to_list(top_k)
+        
+        return [{
+            "id": str(q["_id"]),
+            "body": q.get("body", ""),
+            "username": q.get("username", ""),
+            "user_id": q.get("user_id", ""),
+            "answer_count": q.get("answer_count", 0)
+        } for q in qa_cursor]
+    except Exception as e:
+        print(f"[community_qa_search] error: {e}")
+        return []
+
 async def message_service(user_id: str, message: str, conversationId: str):
     if not message:
         raise ValueError("Message content is required")
@@ -223,13 +312,33 @@ Bạn có thể trả lời bình thường nếu câu hỏi thiên về giao ti
     except Exception as e:
         answer = "Xin lỗi, đã có lỗi kết nối đến AI. Vui lòng thử lại sau. Chi tiết lỗi: " + str(e)
     
+    # --- Community-aware search (chạy song song với LLM, không chặn pipeline) ---
+    community_references = {"posts": [], "questions": []}
+    try:
+        # Dùng q_vec từ embedding bước trước nếu có, nếu không thì embed nhanh
+        if 'q_vecs' in locals() and q_vecs:
+            q_vec_for_community = q_vecs[0]  # Dùng vector của câu hỏi gốc
+        else:
+            def embed_one(text):
+                return get_embedding_model().embed_query(text)
+            q_vec_for_community = await asyncio.to_thread(embed_one, search_question)
+        
+        comm_posts, comm_qa = await asyncio.gather(
+            search_community_posts(q_vec_for_community),
+            search_community_qa(search_question)
+        )
+        community_references = {"posts": comm_posts, "questions": comm_qa}
+    except Exception as e:
+        print(f"[community_search] error: {e}")
+    
     # 4. Lưu tin nhắn bot
     bot_mess = Message(
         conversationId=conversationId,
         role="bot",
         content=answer,
         timestamp=datetime.utcnow(),
-        sources=final_sources if 'final_sources' in locals() else []
+        sources=final_sources if 'final_sources' in locals() else [],
+        community_references=community_references if community_references.get("posts") or community_references.get("questions") else None
     ).dict(exclude_none=True)
     bot_result = await message_collection.insert_one(bot_mess)
 
@@ -247,6 +356,7 @@ Bạn có thể trả lời bình thường nếu câu hỏi thiên về giao ti
         "message": message,
         "answer": answer,
         "sources": bot_mess.get("sources", []),
+        "community_references": bot_mess.get("community_references", None),
         "user_message_id": str(user_msg_result.inserted_id),
         "bot_message_id": str(bot_result.inserted_id),
         "conversationId": conversationId

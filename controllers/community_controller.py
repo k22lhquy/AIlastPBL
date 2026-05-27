@@ -9,7 +9,8 @@ async def create_post_controller(user_data, post_req):
         "description": post_dict["description"],
         "fileId": post_dict["file_id"],
         "fileName": post_dict["file_name"],
-        "storageUrl": post_dict.get("storage_url")
+        "storageUrl": post_dict.get("storage_url"),
+        "tags": post_dict.get("tags", [])
     }
     
     post_id = await create_post_service(doc)

@@ -23,6 +23,7 @@ class CreatePostRequest(BaseModel):
     file_id: str
     file_name: str
     storage_url: Optional[str] = None
+    tags: list[str] = []
 
 class ReportRequest(BaseModel):
     reason: str
@@ -51,7 +52,8 @@ async def search_posts(q: str, user=Depends(get_current_user)):
         pattern = f".*{escaped}.*"
         query = {"$or": [
             {"title": {"$regex": pattern, "$options": "i"}},
-            {"description": {"$regex": pattern, "$options": "i"}}
+            {"description": {"$regex": pattern, "$options": "i"}},
+            {"tags": {"$elemMatch": {"$regex": pattern, "$options": "i"}}}
         ]}
         posts = await db["posts"].find(query).limit(50).to_list(100)
         result = [{
@@ -62,7 +64,8 @@ async def search_posts(q: str, user=Depends(get_current_user)):
             "userId": p.get("userId", ""),
             "fileName": p.get("fileName", ""),
             "createdAt": p.get("createdAt", "").isoformat() if hasattr(p.get("createdAt", ""), "isoformat") else str(p.get("createdAt", "")),
-            "likes": p.get("likes", [])
+            "likes": p.get("likes", []),
+            "tags": p.get("tags", [])
         } for p in posts]
         return BaseResponse(success=True, data=result, message="Success")
     except Exception as e:
@@ -159,6 +162,7 @@ async def upload_community_file(user=Depends(get_current_user), file: UploadFile
                         "chunkIndex": idx,
                         "content": chunk.page_content,
                         "embedding": vector,
+                        "isCommunity": True,
                         "startPage": page + 1 if page is not None else None,
                         "endPage": page + 1 if page is not None else None
                     })

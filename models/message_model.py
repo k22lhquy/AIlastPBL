@@ -10,3 +10,4 @@ class Message(BaseModel):
     timestamp: Optional[datetime] = None
     tokens: Optional[int] = None
     sources: Optional[list] = []
+    community_references: Optional[dict] = None
