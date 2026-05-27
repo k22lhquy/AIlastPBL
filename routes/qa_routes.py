@@ -18,6 +18,9 @@ class CreateQuestionRequest(BaseModel):
     body: str
     tags: List[str] = []
 
+class ReportRequest(BaseModel):
+    reason: str
+
 # ── Questions ─────────────────────────────────────────────────────────────────
 
 @router.post("/questions")
@@ -36,6 +39,31 @@ async def list_questions():
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
 
+@router.get("/search/query")
+async def search_questions(q: str, user=Depends(get_current_user)):
+    try:
+        from configs.database import db
+        import re
+        escaped = re.escape(q)
+        pattern = f".*{escaped}.*"
+        query = {"$or": [
+            {"body": {"$regex": pattern, "$options": "i"}},
+            {"tags": {"$elemMatch": {"$regex": pattern, "$options": "i"}}}
+        ]}
+        questions = await db["questions"].find(query).limit(50).to_list(100)
+        result = [{
+            "id": str(q_doc["_id"]),
+            "body": q_doc.get("body", ""),
+            "username": q_doc.get("username", ""),
+            "user_id": q_doc.get("user_id", ""),
+            "tags": q_doc.get("tags", []),
+            "answer_count": q_doc.get("answer_count", 0),
+            "created_at": q_doc.get("created_at", "").isoformat() if hasattr(q_doc.get("created_at", ""), "isoformat") else str(q_doc.get("created_at", ""))
+        } for q_doc in questions]
+        return BaseResponse(success=True, data=result, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
 @router.get("/questions/{question_id}")
 async def get_question(question_id: str):
     try:
@@ -43,6 +71,16 @@ async def get_question(question_id: str):
         if not res:
             return BaseResponse(success=False, data=None, message="Not found")
         return BaseResponse(success=True, data=res, message="OK")
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
+@router.post("/questions/{question_id}/report")
+async def report_question(question_id: str, req: ReportRequest, user=Depends(get_current_user)):
+    try:
+        from services.qa_service import report_question_service
+        user_id = user["user_id"]
+        await report_question_service(question_id, user_id, req.reason)
+        return BaseResponse(success=True, data=None, message="Reported")
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
 

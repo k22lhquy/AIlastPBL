@@ -24,6 +24,9 @@ class CreatePostRequest(BaseModel):
     file_name: str
     storage_url: Optional[str] = None
 
+class ReportRequest(BaseModel):
+    reason: str
+
 @router.post("/")
 async def create_post(request: CreatePostRequest, user=Depends(get_current_user)):
     try:
@@ -40,6 +43,31 @@ async def get_all_posts():
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
 
+@router.get("/search/query")
+async def search_posts(q: str, user=Depends(get_current_user)):
+    try:
+        import re
+        escaped = re.escape(q)
+        pattern = f".*{escaped}.*"
+        query = {"$or": [
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"description": {"$regex": pattern, "$options": "i"}}
+        ]}
+        posts = await db["posts"].find(query).limit(50).to_list(100)
+        result = [{
+            "id": str(p["_id"]),
+            "title": p.get("title", ""),
+            "description": p.get("description", ""),
+            "username": p.get("username", ""),
+            "userId": p.get("userId", ""),
+            "fileName": p.get("fileName", ""),
+            "createdAt": p.get("createdAt", "").isoformat() if hasattr(p.get("createdAt", ""), "isoformat") else str(p.get("createdAt", "")),
+            "likes": p.get("likes", [])
+        } for p in posts]
+        return BaseResponse(success=True, data=result, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
 @router.post("/{post_id}/like")
 async def toggle_like(post_id: str, user=Depends(get_current_user)):
     try:
@@ -49,9 +77,9 @@ async def toggle_like(post_id: str, user=Depends(get_current_user)):
         return BaseResponse(success=False, data=None, message=str(e))
 
 @router.post("/{post_id}/report")
-async def report_post(post_id: str, user=Depends(get_current_user)):
+async def report_post(post_id: str, request: ReportRequest, user=Depends(get_current_user)):
     try:
-        res = await report_post_controller(user, post_id)
+        res = await report_post_controller(user, post_id, request.reason)
         return BaseResponse(success=True, data=res, message="Reported")
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))

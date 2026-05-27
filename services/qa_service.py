@@ -17,7 +17,7 @@ async def get_username(user_id: str) -> str:
     try:
         user = await users_col.find_one({"_id": ObjectId(user_id)})
         if user:
-            return user.get("username", "Unknown")
+            return user.get("email", "Unknown")
     except Exception:
         pass
     return "Unknown"
@@ -25,6 +25,7 @@ async def get_username(user_id: str) -> str:
 # ── Questions ─────────────────────────────────────────────────────────────────
 
 async def create_question_service(doc: dict) -> str:
+    doc["reports"] = []
     res = await questions_col.insert_one(doc)
     return str(res.inserted_id)
 
@@ -101,3 +102,19 @@ async def delete_question_service(question_id: str, user_id: str):
         raise Exception("Question not found or unauthorized")
     await answers_col.delete_many({"question_id": question_id})
     return {"message": "Question deleted"}
+
+async def report_question_service(question_id: str, user_id: str, reason: str):
+    q = await questions_col.find_one({"_id": ObjectId(question_id)})
+    if not q:
+        raise Exception("Question not found")
+        
+    reports = q.get("reports", [])
+    for r in reports:
+        if isinstance(r, dict) and r.get("userId") == user_id:
+            return
+        elif isinstance(r, str) and r == user_id:
+            return
+            
+    reports.append({"userId": user_id, "reason": reason})
+    await questions_col.update_one({"_id": ObjectId(question_id)}, {"$set": {"reports": reports}})
+

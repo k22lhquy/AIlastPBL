@@ -22,8 +22,8 @@ async def get_all_posts_controller():
 async def toggle_like_controller(user_data, post_id: str):
     return await toggle_like_service(post_id, user_data["user_id"])
 
-async def report_post_controller(user_data, post_id: str):
-    return await report_post_service(post_id, user_data["user_id"])
+async def report_post_controller(user_data, post_id: str, reason: str):
+    return await report_post_service(post_id, user_data["user_id"], reason)
 
 async def get_user_posts_controller(user_data):
     posts = await get_user_posts_service(user_data["user_id"])

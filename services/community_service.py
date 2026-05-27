@@ -43,16 +43,23 @@ async def toggle_like_service(post_id: str, user_id: str):
     await post_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"likes": likes}})
     return {"action": action, "likes_count": len(likes)}
 
-async def report_post_service(post_id: str, user_id: str):
+async def report_post_service(post_id: str, user_id: str, reason: str):
     post_col = db["posts"]
     post = await post_col.find_one({"_id": ObjectId(post_id)})
     if not post:
         raise Exception("Post not found")
         
     reports = post.get("reports", [])
-    if user_id not in reports:
-        reports.append(user_id)
-        await post_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"reports": reports}})
+    
+    # check backward compat or duplicate user
+    for r in reports:
+        if isinstance(r, dict) and r.get("userId") == user_id:
+            return
+        elif isinstance(r, str) and r == user_id:
+            return
+
+    reports.append({"userId": user_id, "reason": reason})
+    await post_col.update_one({"_id": ObjectId(post_id)}, {"$set": {"reports": reports}})
         
 async def get_user_posts_service(user_id: str):
     post_col = db["posts"]

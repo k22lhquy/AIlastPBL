@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import auth_routes, user_routes, chat_box_routes, message_routes, community_routes, qa_routes
+from routes import auth_routes, user_routes, chat_box_routes, message_routes, community_routes, qa_routes, admin_routes
 
 app = FastAPI()
 
@@ -18,3 +18,4 @@ app.include_router(chat_box_routes.router, prefix="/chat-box")
 app.include_router(message_routes.router, prefix="/messages")
 app.include_router(community_routes.router, prefix="/community")
 app.include_router(qa_routes.router, prefix="/qa")
+app.include_router(admin_routes.router, prefix="/admin")

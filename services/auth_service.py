@@ -53,7 +53,7 @@ async def login(username: str, password: str):
         raise Exception("Wrong password")
 
     token = create_access_token({
-        "user_id": str(user["_id"]),
+        "user_id": str(user["userId"]),
         "username": user["username"]
     })
 

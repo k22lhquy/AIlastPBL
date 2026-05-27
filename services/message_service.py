@@ -6,6 +6,7 @@ import asyncio
 from langchain_core.documents import Document
 from libs.ai.embedding import get_embedding_model
 from libs.ai.reranker import get_reranker_model
+from libs.ai.bm25_retriever import build_bm25, bm25_search, reciprocal_rank_fusion
 from libs.ai.config import LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, MAX_OUTPUT_TOKENS
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -115,39 +116,53 @@ Câu hỏi gốc: {question}"""
                 
             q_vecs = await asyncio.to_thread(embed_multi_queries, all_questions)
             
-            # 4. Search song song & gộp kết quả
+            # [HYBRID SEARCH] Bước 3b: Xây dựng BM25 index từ chunks
+            def build_bm25_index():
+                return build_bm25(chunks)
+            bm25_model, bm25_chunks = await asyncio.to_thread(build_bm25_index)
+            
+            # 4. [HYBRID SEARCH] Chạy cả Vector Search và BM25 Search, gộp bằng RRF
             all_docs = []
-            for q_vec in q_vecs:
+            for q_vec, question in zip(q_vecs, all_questions):
+                # --- Vector Search (Cosine Similarity) ---
                 q_vec_np = np.array(q_vec)
                 q_norm = np.linalg.norm(q_vec_np)
                 
-                scored_chunks = []
+                vector_scored = []
                 for chunk in chunks:
                     if "embedding" not in chunk or not chunk["embedding"]:
                         continue
                     c_vec_np = np.array(chunk["embedding"])
                     c_norm = np.linalg.norm(c_vec_np)
                     if c_norm == 0 or q_norm == 0:
-                        score = 0
+                        score = 0.0
                     else:
-                        score = np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm)
-                    scored_chunks.append((score, chunk["content"], chunk.get("fileId")))
+                        score = float(np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm))
+                    vector_scored.append((score, chunk.get("content", ""), chunk.get("fileId", "")))
+                vector_scored.sort(key=lambda x: x[0], reverse=True)
+                vector_top = vector_scored[:10]  # Lấy top 10 cho RRF
+
+                # --- BM25 Search (Keyword Match) ---
+                def run_bm25(q):
+                    return bm25_search(bm25_model, bm25_chunks, q, top_k=10)
+                bm25_top = await asyncio.to_thread(run_bm25, question)
                 
-                # Lấy Top 3 chunks cho mỗi câu hỏi
-                scored_chunks.sort(key=lambda x: x[0], reverse=True)
-                top_k = scored_chunks[:3]
-                all_docs.extend(top_k)
+                # --- Reciprocal Rank Fusion (Gộp kết quả) ---
+                fused = reciprocal_rank_fusion(vector_top, bm25_top, k=60)
                 
-            # Bỏ trùng lặp (dựa theo nội dung 100 ký tự đầu để nhận biết)
+                # Lấy top 5 sau khi fuse (đủ để reranker chọn thêm)
+                all_docs.extend(fused[:5])
+                
+            # Bỏ trùng lặp (dựa theo nội dung 120 ký tự đầu)
             seen = set()
             unique_docs = []
             for doc in all_docs:
-                key = doc[1][:100]
+                key = doc[1][:120]
                 if key not in seen:
                     seen.add(key)
                     unique_docs.append(doc)
             
-            print(f"   → Tìm được {len(all_docs)} chunks, còn {len(unique_docs)} sau khi bỏ trùng\n")
+            print(f"   → [Hybrid] {len(all_docs)} chunks total, {len(unique_docs)} sau khi bỏ trùng (RRF fused)\n")
             
             # 5. Reranking
             if unique_docs:
@@ -217,6 +232,16 @@ Bạn có thể trả lời bình thường nếu câu hỏi thiên về giao ti
         sources=final_sources if 'final_sources' in locals() else []
     ).dict(exclude_none=True)
     bot_result = await message_collection.insert_one(bot_mess)
+
+    # [ADMIN] Track token usage without blocking
+    from bson import ObjectId
+    tokens_used = len(answer) // 4 + len(context_text) // 4
+    await db["users"].update_one(
+        {"_id": ObjectId(user_id)},
+        {"$inc": {"tokensUsed": tokens_used}}
+    )
+
+
 
     return {
         "message": message,
