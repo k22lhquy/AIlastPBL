@@ -48,15 +48,15 @@ async def search_questions(q: str, user=Depends(get_current_user)):
         pattern = f".*{escaped}.*"
         query = {"$or": [
             {"body": {"$regex": pattern, "$options": "i"}},
-            {"tags": {"$elemMatch": {"$regex": pattern, "$options": "i"}}}
+            {"tags": {"$regex": pattern, "$options": "i"}}
         ]}
-        questions = await db["questions"].find(query).limit(50).to_list(100)
+        questions = await db["questions"].find(query).limit(50).to_list(50)
         result = [{
             "id": str(q_doc["_id"]),
             "body": q_doc.get("body", ""),
             "username": q_doc.get("username", ""),
             "user_id": q_doc.get("user_id", ""),
-            "tags": q_doc.get("tags", []),
+            "tags": q_doc.get("tags") if isinstance(q_doc.get("tags"), list) else [],
             "answer_count": q_doc.get("answer_count", 0),
             "created_at": q_doc.get("created_at", "").isoformat() if hasattr(q_doc.get("created_at", ""), "isoformat") else str(q_doc.get("created_at", ""))
         } for q_doc in questions]

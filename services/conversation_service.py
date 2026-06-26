@@ -71,10 +71,14 @@ async def upload_file_service(user_id: str, conversation_id: str, file: UploadFi
         file_path = f"uploads/{user_id}/{file_name}"
 
         # upload supabase
+        content_type = file.content_type or "application/octet-stream"
+        if content_type.startswith("text/"):
+            content_type += "; charset=utf-8"
+
         supabase.storage.from_("files").upload(
             file_path,
             content,
-            {"content-type": file.content_type or "application/octet-stream"}
+            {"content-type": content_type}
         )
 
         public_url = supabase.storage.from_("files").get_public_url(file_path)

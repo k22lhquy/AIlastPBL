@@ -51,13 +51,11 @@ async def search_users(q: str, user=Depends(get_current_user)):
                 {"email": {"$regex": regex_pattern, "$options": "i"}}
             ]
         }
-        pipeline = [
-            {"$match": query},
-            {"$set": {"likeCount": {"$size": {"$ifNull": ["$likes", []]}}}},
-            {"$sort": {"likeCount": -1}},
-            {"$limit": 50}
-        ]
-        users = await db["users"].aggregate(pipeline).to_list(100)
+        # Simplify to find to avoid pipeline compatibility issues
+        users = await db["users"].find(query).limit(50).to_list(50)
+        
+        # Sort manually by like count to ensure correctness
+        users.sort(key=lambda u: len(u.get("likes", [])), reverse=True)
         
         result = [
             {

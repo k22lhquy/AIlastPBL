@@ -16,96 +16,135 @@ message_collection = db["messages"]
 file_chunks_collection = db["file_chunks"]
 upload_file_collection = db["uploaded_files"]
 
-async def search_community_posts(q_vec: list, top_k: int = 3, threshold: float = 0.45):
-    """Semantic search on community file chunks using pre-computed embeddings."""
+async def search_community_posts(q_vec: list, query_text: str, top_k: int = 5, threshold: float = 0.81):
+    """Semantic search on community posts (via file chunks and post metadata) with keyword fallback."""
     try:
-        community_chunks = await file_chunks_collection.find(
-            {"isCommunity": True}
-        ).to_list(None)
-        if not community_chunks:
-            return []
-        
+        import numpy as np
+        from bson import ObjectId
         q_vec_np = np.array(q_vec)
         q_norm = np.linalg.norm(q_vec_np)
         if q_norm == 0:
             return []
+            
+        # Logic Hybrid: Lấy bài nếu (Score >= 0.81) HOẶC (Keyword Match AND Score >= 0.65)
+        keywords = [w.lower() for w in query_text.split() if len(w) >= 2]
         
-        scored = []
+        # 1. Search file chunks
+        community_chunks = await file_chunks_collection.find({"isCommunity": True}).to_list(None)
+        
+        file_scored = []
         for chunk in community_chunks:
-            if not chunk.get("embedding"):
-                continue
+            if not chunk.get("embedding"): continue
             c_vec_np = np.array(chunk["embedding"])
             c_norm = np.linalg.norm(c_vec_np)
-            if c_norm == 0:
-                continue
-            score = float(np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm))
-            if score >= threshold:
-                scored.append((score, chunk.get("fileId", "")))
+            if c_norm > 0:
+                score = float(np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm))
+                
+                content = chunk.get("content", "").lower()
+                has_key = any(k in content for k in keywords) if keywords else False
+                
+                if score >= threshold or (has_key and score >= 0.65):
+                    file_scored.append((score, chunk.get("fileId", "")))
         
-        scored.sort(key=lambda x: x[0], reverse=True)
-        
-        # Deduplicate by fileId
+        file_scored.sort(key=lambda x: x[0], reverse=True)
         seen_file_ids = []
-        for score, fid in scored:
-            if fid not in seen_file_ids:
+        for score, fid in file_scored:
+            if fid and fid not in seen_file_ids:
                 seen_file_ids.append(fid)
             if len(seen_file_ids) >= top_k:
                 break
-        
-        if not seen_file_ids:
-            return []
-        
-        # Lookup posts from file IDs
-        from bson import ObjectId
-        posts = await db["posts"].find({"fileId": {"$in": seen_file_ids}}).to_list(None)
-        result = []
+                
+        results_from_chunks = []
+        if seen_file_ids:
+            results_from_chunks = await db["posts"].find({"fileId": {"$in": seen_file_ids}}).to_list(None)
+            
+        # 2. Search post embeddings directly
+        posts = await db["posts"].find().to_list(None)
+        post_scored = []
         for p in posts:
+            if not p.get("embedding"): continue
+            c_vec_np = np.array(p["embedding"])
+            c_norm = np.linalg.norm(c_vec_np)
+            if c_norm > 0:
+                score = float(np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm))
+                
+                title = p.get("title", "").lower()
+                desc = p.get("description", "").lower()
+                tags = " ".join(p.get("tags", [])).lower()
+                has_key = any(k in title or k in desc or k in tags for k in keywords) if keywords else False
+                
+                if score >= threshold or (has_key and score >= 0.65):
+                     post_scored.append((score, p))
+                    
+        post_scored.sort(key=lambda x: x[0], reverse=True)
+        results_from_posts = [s[1] for s in post_scored] # No hard slice, use threshold filter
+        
+        # 3. Combine
+        combined = {str(p["_id"]): p for p in results_from_chunks + results_from_posts}
+        
+        # Trả về các post relevance nhất (chỉ lấy top_k)
+        # Để sort chính xác ở đây hơi khó vì gộp 2 list, nhưng mình chỉ giới hạn size
+        result = []
+        for pid, p in combined.items():
             result.append({
-                "id": str(p["_id"]),
+                "id": pid,
                 "title": p.get("title", ""),
                 "description": p.get("description", ""),
                 "username": p.get("username", ""),
-                "userId": p.get("userId", "")
+                "userId": p.get("userId", ""),
+                "tags": p.get("tags", [])
             })
         return result[:top_k]
     except Exception as e:
         print(f"[community_posts_search] error: {e}")
         return []
 
-async def search_community_qa(question_text: str, top_k: int = 3):
-    """Keyword regex search on Q&A questions."""
+async def search_community_qa(q_vec: list, query_text: str, top_k: int = 5, threshold: float = 0.81):
+    """Semantic vector search on Q&A questions with keyword fallback."""
     try:
-        import re
-        escaped = re.escape(question_text[:100])
-        pattern = f".*{escaped}.*"
-        # Try full phrase first, if too few results generalize to individual words
-        qa_cursor = await db["questions"].find({
-            "$or": [
-                {"body": {"$regex": pattern, "$options": "i"}},
-                {"tags": {"$elemMatch": {"$regex": pattern, "$options": "i"}}}
-            ]
-        }).to_list(top_k)
+        from bson import ObjectId
+        import numpy as np
         
-        if not qa_cursor:
-            # Fallback: search individual meaningful words
-            words = [w for w in re.split(r'\s+', question_text) if len(w) > 3]
-            if not words:
-                return []
-            word_query = {"$or": [{"body": {"$regex": re.escape(w), "$options": "i"}} for w in words[:5]]}
-            qa_cursor = await db["questions"].find(word_query).limit(top_k).to_list(top_k)
+        q_vec_np = np.array(q_vec)
+        q_norm = np.linalg.norm(q_vec_np)
+        if q_norm == 0:
+            return []
+            
+        questions = await db["questions"].find().to_list(None)
+        
+        keywords = [w.lower() for w in query_text.split() if len(w) >= 2]
+        
+        scored = []
+        for q in questions:
+            if not q.get("embedding"):
+                continue
+            c_vec_np = np.array(q["embedding"])
+            c_norm = np.linalg.norm(c_vec_np)
+            if c_norm > 0:
+                score = float(np.dot(q_vec_np, c_vec_np) / (q_norm * c_norm))
+                
+                body = q.get("body", "").lower()
+                tags = " ".join(q.get("tags", [])).lower()
+                has_key = any(k in body or k in tags for k in keywords) if keywords else False
+                
+                if score >= threshold or (has_key and score >= 0.65):
+                    scored.append((score, q))
+                
+        scored.sort(key=lambda x: x[0], reverse=True)
         
         return [{
-            "id": str(q["_id"]),
-            "body": q.get("body", ""),
-            "username": q.get("username", ""),
-            "user_id": q.get("user_id", ""),
-            "answer_count": q.get("answer_count", 0)
-        } for q in qa_cursor]
+            "id": str(s[1]["_id"]),
+            "body": s[1].get("body", ""),
+            "username": s[1].get("username", ""),
+            "user_id": s[1].get("user_id", ""),
+            "answer_count": s[1].get("answer_count", 0),
+            "tags": s[1].get("tags", [])
+        } for s in scored[:top_k]]
     except Exception as e:
         print(f"[community_qa_search] error: {e}")
         return []
 
-async def message_service(user_id: str, message: str, conversationId: str):
+async def message_service(user_id: str, message: str, conversationId: str, activeFileId: str = None):
     if not message:
         raise ValueError("Message content is required")
     if message.strip() == "":
@@ -169,6 +208,11 @@ Câu hỏi đã viết lại:"""
     # 1. Tìm tất cả files của cuộc trò chuyện này
     files = await upload_file_collection.find({"conversationId": conversationId}).to_list(None)
     file_ids = [str(f["_id"]) for f in files]
+    
+    # Nếu user chọn 1 file cụ thể, chỉ query file đó
+    if activeFileId and activeFileId in file_ids:
+        file_ids = [activeFileId]
+        print(f"🎯 Active file filter: only querying file {activeFileId}")
     
     context_text = ""
     if file_ids:
@@ -275,17 +319,76 @@ Câu hỏi gốc: {question}"""
             else:
                 context_text = ""
                 final_sources = []
+                
+    # 5. Intent Detection / Routing (Khoanh vùng tìm kiếm)
+    def detect_intent(q):
+        intent_prompt = ChatPromptTemplate.from_template("""
+        Câu hỏi của người dùng: "{question}"
+        Hãy đánh giá xem người dùng có đang CHỈ muốn hỏi về nội dung bên trong một file, tài liệu, đoạn chat hay báo cáo cụ thể đang được đính kèm ở hiện tại, và KHÔNG muốn liên hệ các kiến thức bên ngoài hay tìm kiếm trên mạng/cộng đồng không?
+        Dấu hiệu: "file này", "tài liệu này", "đoạn chat", "báo cáo tôi gửi", "trong đây", "học sinh này"...
+        Nếu đúng là câu hỏi CÓ ràng buộc rõ ràng chỉ hỏi trong file/tài liệu đính kèm, hãy xuất ra chính xác chữ: TRUE
+        Nếu câu hỏi hỏi chung chung, hoặc hỏi kiến thức mở, không bị ràng buộc cụ thể vào tài liệu, hãy xuất ra chính xác chữ: FALSE
+        Chỉ in ra đúng 1 từ tiếng Anh in hoa (TRUE hoặc FALSE), không giải thích.
+        """)
+        intent_chain = intent_prompt | ChatOpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY, model=LLM_MODEL, temperature=0, max_tokens=10) | StrOutputParser()
+        return intent_chain.invoke({"question": q}).strip().upper()
+
+    try:
+        is_strict_context_str = await asyncio.to_thread(detect_intent, message)
+        is_strict_context = "TRUE" in is_strict_context_str
+        print(f"🕵️ Intent Classification (Strict Context Only?): {is_strict_context_str} -> {is_strict_context}")
+    except Exception as e:
+        print(f"[intent_detection] error: {e}")
+        is_strict_context = False
+
+    # --- Community-aware search (chạy song song với LLM, không chặn pipeline) ---
+    community_references = {"posts": [], "questions": []}
+    if not is_strict_context:
+        try:
+            # Dùng q_vec từ embedding bước trước nếu có, nếu không thì embed nhanh
+            if 'q_vecs' in locals() and q_vecs:
+                q_vec_for_community = q_vecs[0]  # Dùng vector của câu hỏi gốc
+            else:
+                def embed_one(text):
+                    return get_embedding_model().embed_query(text)
+                q_vec_for_community = await asyncio.to_thread(embed_one, search_question)
+            
+            comm_posts, comm_qa = await asyncio.gather(
+                search_community_posts(q_vec_for_community, query_text=search_question),
+                search_community_qa(q_vec_for_community, query_text=search_question)
+            )
+            community_references = {"posts": comm_posts, "questions": comm_qa}
+            
+            # Đưa nội dung cộng đồng vào context cho LLM đọc
+            if comm_posts or comm_qa:
+                context_text += "\n\n=== TÀI LIỆU TỪ CỘNG ĐỒNG (Tham khảo để trả lời nếu cần thiết) ===\n"
+                if comm_posts:
+                    context_text += "Các bài Chia Sẻ:\n"
+                    for p in comm_posts:
+                        context_text += f"- Tiêu đề: {p['title']}\n  Nội dung: {p['description']}\n  Tags: {', '.join(p.get('tags', []))}\n"
+                if comm_qa:
+                    context_text += "Các câu Hỏi & Đáp:\n"
+                    for q in comm_qa:
+                        context_text += f"- Câu hỏi: {q['body']}\n  Tags: {', '.join(q.get('tags', []))}\n"
+                        
+        except Exception as e:
+            print(f"[community_search] error: {e}")
             
     # 3. Tạo prompt và gọi LLM
     prompt = ChatPromptTemplate.from_template("""
-Bạn là trợ lý thông minh. Hãy trả lời câu hỏi CHỈ DỰA TRÊN thông tin trong lịch sử hội thoại và tài liệu dưới đây.
-Nếu thông tin không có trong tài liệu và lịch sử, hãy nói: "Tài liệu không đề cập đến vấn đề này."
-Bạn có thể trả lời bình thường nếu câu hỏi thiên về giao tiếp thông thường.
+Bạn là trợ lý thông minh. Hãy trả lời câu hỏi dựa trên thông tin trong lịch sử hội thoại và tài liệu được cung cấp.
+
+=== QUY TẮC TRẢ LỜI ===
+1. Nếu có thông tin từ "NỘI DUNG TÀI LIỆU (FILE IMPORT)", hãy ưu tiên dùng nó làm căn cứ chính.
+2. Nếu không có trong file import nhưng có trong "TÀI LIỆU TỪ CỘNG ĐỒNG", hãy trả lời dựa trên đó và nêu rõ đây là thông tin từ cộng đồng.
+3. Nếu người dùng hỏi về các chủ đề/tổng hợp mà không tìm thấy kết quả chính xác, hãy dùng các "Tags" từ tài liệu cộng đồng để gợi ý các chủ đề liên quan.
+4. Nếu cả hai nguồn đều không có thông tin phù hợp, hãy thông báo: "Hiện tại hệ thống và cộng đồng chưa có thông tin chi tiết về vấn đề này." và gợi ý người dùng thử tìm kiếm bằng các từ khóa khác.
+5. Luôn ưu tiên sự hữu ích và tính gợi mở.
 
 === LỊCH SỬ HỘI THOẠI GẦN ĐÂY ===
 {history}
 
-=== NỘI DUNG TÀI LIỆU ===
+=== NỘI DUNG CHI TIẾT ===
 {context}
 
 === CÂU HỎI MỚI ===
@@ -311,25 +414,6 @@ Bạn có thể trả lời bình thường nếu câu hỏi thiên về giao ti
         answer = await asyncio.to_thread(generate_answer, context_text, history_text, message)
     except Exception as e:
         answer = "Xin lỗi, đã có lỗi kết nối đến AI. Vui lòng thử lại sau. Chi tiết lỗi: " + str(e)
-    
-    # --- Community-aware search (chạy song song với LLM, không chặn pipeline) ---
-    community_references = {"posts": [], "questions": []}
-    try:
-        # Dùng q_vec từ embedding bước trước nếu có, nếu không thì embed nhanh
-        if 'q_vecs' in locals() and q_vecs:
-            q_vec_for_community = q_vecs[0]  # Dùng vector của câu hỏi gốc
-        else:
-            def embed_one(text):
-                return get_embedding_model().embed_query(text)
-            q_vec_for_community = await asyncio.to_thread(embed_one, search_question)
-        
-        comm_posts, comm_qa = await asyncio.gather(
-            search_community_posts(q_vec_for_community),
-            search_community_qa(search_question)
-        )
-        community_references = {"posts": comm_posts, "questions": comm_qa}
-    except Exception as e:
-        print(f"[community_search] error: {e}")
     
     # 4. Lưu tin nhắn bot
     bot_mess = Message(

@@ -53,9 +53,9 @@ async def search_posts(q: str, user=Depends(get_current_user)):
         query = {"$or": [
             {"title": {"$regex": pattern, "$options": "i"}},
             {"description": {"$regex": pattern, "$options": "i"}},
-            {"tags": {"$elemMatch": {"$regex": pattern, "$options": "i"}}}
+            {"tags": {"$regex": pattern, "$options": "i"}}
         ]}
-        posts = await db["posts"].find(query).limit(50).to_list(100)
+        posts = await db["posts"].find(query).limit(50).to_list(50)
         result = [{
             "id": str(p["_id"]),
             "title": p.get("title", ""),
@@ -64,8 +64,8 @@ async def search_posts(q: str, user=Depends(get_current_user)):
             "userId": p.get("userId", ""),
             "fileName": p.get("fileName", ""),
             "createdAt": p.get("createdAt", "").isoformat() if hasattr(p.get("createdAt", ""), "isoformat") else str(p.get("createdAt", "")),
-            "likes": p.get("likes", []),
-            "tags": p.get("tags", [])
+            "likes": p.get("likes") if isinstance(p.get("likes"), list) else [],
+            "tags": p.get("tags") if isinstance(p.get("tags"), list) else []
         } for p in posts]
         return BaseResponse(success=True, data=result, message="Success")
     except Exception as e:
@@ -115,10 +115,14 @@ async def upload_community_file(user=Depends(get_current_user), file: UploadFile
         file_path = f"community/{file_name}"
 
         # upload supabase
+        content_type = file.content_type or "application/octet-stream"
+        if content_type.startswith("text/"):
+            content_type += "; charset=utf-8"
+
         supabase.storage.from_("files").upload(
             file_path,
             content,
-            {"content-type": file.content_type or "application/octet-stream"}
+            {"content-type": content_type}
         )
         public_url = supabase.storage.from_("files").get_public_url(file_path)
 

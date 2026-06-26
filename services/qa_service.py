@@ -1,5 +1,6 @@
 from bson import ObjectId
 from configs.database import db
+from libs.ai.embedding import get_embedding_model
 
 questions_col = db["questions"]
 answers_col = db["answers"]
@@ -26,6 +27,15 @@ async def get_username(user_id: str) -> str:
 
 async def create_question_service(doc: dict) -> str:
     doc["reports"] = []
+    try:
+        model = get_embedding_model()
+        text_to_embed = f"{doc.get('body', '')} {' '.join(doc.get('tags', []))}"
+        embed_vec = model.embed_query(text_to_embed)
+        doc["embedding"] = embed_vec
+    except Exception as e:
+        print("Failed to embed question:", e)
+        doc["embedding"] = []
+        
     res = await questions_col.insert_one(doc)
     return str(res.inserted_id)
 

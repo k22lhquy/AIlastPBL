@@ -2,12 +2,22 @@ from configs.database import db
 from models.post_model import PostModel
 from bson import ObjectId
 import datetime
+from libs.ai.embedding import get_embedding_model
 
 async def create_post_service(post_data: dict):
     post_col = db["posts"]
     post_data["createdAt"] = datetime.datetime.utcnow()
     post_data["likes"] = []
     post_data["reports"] = []
+    
+    try:
+        model = get_embedding_model()
+        text_to_embed = f"{post_data.get('title', '')} {post_data.get('description', '')} {' '.join(post_data.get('tags', []))}"
+        embed_vec = model.embed_query(text_to_embed)
+        post_data["embedding"] = embed_vec
+    except Exception as e:
+        print("Failed to embed post:", e)
+        post_data["embedding"] = []
     
     result = await post_col.insert_one(post_data)
     return str(result.inserted_id)

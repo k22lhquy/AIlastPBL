@@ -1,4 +1,5 @@
 from email import message
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from controllers.message_controller import message_controller, get_messages_controller
@@ -9,13 +10,14 @@ from libs.baseResponse import BaseResponse
 class SendMessageRequest(BaseModel):
     message: str
     conversationId: str
+    activeFileId: Optional[str] = None
     
 router = APIRouter()
 
 @router.post("/send_message")
 async def send_message(user=Depends(get_current_user), request: SendMessageRequest = None):
     try:
-        result = await message_controller(user_id=user["user_id"], message=request.message, conversationId=request.conversationId)
+        result = await message_controller(user_id=user["user_id"], message=request.message, conversationId=request.conversationId, activeFileId=request.activeFileId)
         return BaseResponse(success=True, data=result, message="Success")
     except HTTPException as e:
         return BaseResponse(success=False, data=None, message=str(e.detail))
