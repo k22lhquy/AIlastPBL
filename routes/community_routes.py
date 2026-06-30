@@ -105,26 +105,34 @@ async def delete_post(post_id: str, user=Depends(get_current_user)):
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
 
-import urllib.request
+class PreviewByIdRequest(BaseModel):
+    file_id: str
 
-@router.get("/posts/preview")
-def preview_community_file(url: str):
+@router.post("/posts/preview-chunks")
+async def preview_by_file_id(req: PreviewByIdRequest):
+    """Read file content directly from MongoDB file_chunks - avoids Supabase URL 400 errors."""
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            content_bytes = response.read()
-            try:
-                content = content_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                content = content_bytes.decode("latin-1", errors="replace")
-            if content.startswith('\ufeff'):
-                content = content[1:]
-            return BaseResponse(success=True, data=content, message="Success")
+        file_id = req.file_id.strip()
+        if not file_id:
+            return BaseResponse(success=False, data=None, message="file_id không hợp lệ")
+        
+        chunks = await db["file_chunks"].find(
+            {"fileId": file_id},
+            {"content": 1, "chunkIndex": 1, "_id": 0}
+        ).sort("chunkIndex", 1).to_list(None)
+        
+        if not chunks:
+            return BaseResponse(success=False, data=None, message="Không tìm thấy nội dung tài liệu. File có thể chưa được xử lý.")
+        
+        content = "\n\n".join(c["content"] for c in chunks if c.get("content"))
+        return BaseResponse(success=True, data=content, message="Success")
     except Exception as e:
+        print(f"[preview_by_file_id] error: {e}")
         return BaseResponse(success=False, data=None, message=str(e))
 
 
 @router.post("/upload")
+
 async def upload_community_file(user=Depends(get_active_user), file: UploadFile = File(...)):
     try:
         content = await file.read()
