@@ -3,7 +3,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 import uuid
 
-from middlewares.auth_middleware import get_current_user
+from middlewares.auth_middleware import get_current_user, get_active_user
 from controllers.qa_controller import (
     create_question_controller, get_all_questions_controller,
     get_question_controller, create_answer_controller,
@@ -24,7 +24,7 @@ class ReportRequest(BaseModel):
 # ── Questions ─────────────────────────────────────────────────────────────────
 
 @router.post("/questions")
-async def create_question(request: CreateQuestionRequest, user=Depends(get_current_user)):
+async def create_question(request: CreateQuestionRequest, user=Depends(get_active_user)):
     try:
         res = await create_question_controller(user, request.body, request.tags)
         return BaseResponse(success=True, data={"id": res}, message="Question created")
@@ -117,7 +117,7 @@ async def create_answer(
     question_id: str,
     body: str = Form(...),
     image: Optional[UploadFile] = File(None),
-    user=Depends(get_current_user)
+    user=Depends(get_active_user)
 ):
     try:
         image_url = None

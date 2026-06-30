@@ -72,3 +72,15 @@ async def get_reported_content_service():
         
     reports_view.sort(key=lambda x: x["reportCount"], reverse=True)
     return reports_view
+
+
+async def block_user_service(user_id: str, is_blocked: bool):
+    try:
+        from bson import ObjectId
+        result = await users_col.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"isBlocked": is_blocked}}
+        )
+        return result.modified_count > 0
+    except Exception as e:
+        raise Exception(f"Không thể cập nhật trạng thái block: {str(e)}")

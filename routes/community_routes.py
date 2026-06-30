@@ -4,7 +4,7 @@ import tempfile
 import os
 import asyncio
 
-from middlewares.auth_middleware import get_current_user
+from middlewares.auth_middleware import get_current_user, get_active_user
 from controllers.community_controller import create_post_controller, get_all_posts_controller, toggle_like_controller, report_post_controller
 from libs.baseResponse import BaseResponse
 from pydantic import BaseModel
@@ -29,7 +29,7 @@ class ReportRequest(BaseModel):
     reason: str
 
 @router.post("/")
-async def create_post(request: CreatePostRequest, user=Depends(get_current_user)):
+async def create_post(request: CreatePostRequest, user=Depends(get_active_user)):
     try:
         res = await create_post_controller(user, request)
         return BaseResponse(success=True, data=res, message="Post created")
@@ -106,7 +106,7 @@ async def delete_post(post_id: str, user=Depends(get_current_user)):
         return BaseResponse(success=False, data=None, message=str(e))
 
 @router.post("/upload")
-async def upload_community_file(user=Depends(get_current_user), file: UploadFile = File(...)):
+async def upload_community_file(user=Depends(get_active_user), file: UploadFile = File(...)):
     try:
         content = await file.read()
         original_name = safe_filename(file.filename)

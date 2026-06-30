@@ -5,3 +5,7 @@ async def get_admin_stats_controller():
 
 async def get_all_users_controller():
     return await admin_service.get_all_users_service()
+
+
+async def block_user_controller(user_id: str, is_blocked: bool):
+    return await admin_service.block_user_service(user_id, is_blocked)

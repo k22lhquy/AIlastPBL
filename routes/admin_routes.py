@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from middlewares.admin_middleware import require_admin
 import controllers.admin_controller as controller
 from libs.baseResponse import BaseResponse
+
+class BlockUserRequest(BaseModel):
+    isBlocked: bool
 
 router = APIRouter()
 
@@ -49,4 +53,14 @@ async def get_reports(user=Depends(require_admin)):
         return BaseResponse(success=True, data=res, message="Success")
     except Exception as e:
         return BaseResponse(success=False, data=None, message=str(e))
+
+
+@router.patch("/users/{user_id}/block")
+async def toggle_block_user(user_id: str, request: BlockUserRequest, user=Depends(require_admin)):
+    try:
+        res = await controller.block_user_controller(user_id, request.isBlocked)
+        return BaseResponse(success=True, data=res, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, data=None, message=str(e))
+
 
